@@ -16,7 +16,8 @@ x-backend-app-env: &backend-app-env
   AUTH_MODE: ${AUTH_MODE:-single-tenant}
   SECRET_KEY: ${SECRET_KEY:-GEGL1RHjFVOxIO80Dp8+ODlZPOjm2IDBJB/UunHlf3c=}
   PASSWORD: ${PASSWORD:-password}
-  DASHBOARD_API_BASE: ${DASHBOARD_API_BASE:-http://localhost:3000}
+  DASHBOARD_API_BASE: ${DASHBOARD_API_BASE:-https://dittofeed.newwave.mw}
+
 services:
   lite:
     image: ${IMAGE_REPOSITORY:-dittofeed/dittofeed-lite}:${IMAGE_TAG:-v0.22.0}
@@ -28,8 +29,7 @@ services:
       resources:
         limits:
           memory: ${LITE_CONTAINER_MEM_LIMIT:-1024}m
-    ports:
-      - "3000:3000"
+    # Removed direct port mapping - now handled by Traefik
     depends_on:
       - postgres
       - temporal
@@ -38,11 +38,39 @@ services:
       <<: *backend-app-env
       # comment out after initial setup
       BOOTSTRAP: "true"
-    # README: To add local env variables uncomment the following line and add a .env file in the root directory
-    # env_file:
-    #   - .env
+    env_file:
+      - .env
     networks:
       - dittofeed-network-lite
+      - traefik  # Added Traefik network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.services.dittofeed.loadbalancer.server.port=3000"
+      
+      # Router configuration
+      - "traefik.http.routers.dittofeed-http.rule=Host(`dittofeed.newwave.mw`)"
+      - "traefik.http.routers.dittofeed-http.entrypoints=web"
+      - "traefik.http.routers.dittofeed-http.priority=100"
+      - "traefik.http.routers.dittofeed-http.middlewares=dittofeed-security-headers"
+      
+      # Security headers middleware for Dittofeed
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.hostsproxyheaders=X-Forwarded-Host"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.referrerpolicy=strict-origin-when-cross-origin"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.stsincludesubdomains=true"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.stspreload=true"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.stsseconds=31536000"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.framedeny=true"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.browserxssfilter=true"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.permissionspolicy=camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.contentsecuritypolicy=default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'self'"
+      # Hide server header and remove ETags
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.customresponseheaders.Server="
+      - "traefik.http.middlewares.dittofeed-security-headers.headers.customresponseheaders.ETag="
+
   # useful for upgrading dittofeed
   admin-cli:
     image: dittofeed/dittofeed-admin-cli:${IMAGE_TAG:-v0.22.0}
@@ -58,11 +86,11 @@ services:
       - clickhouse-server
     environment:
       <<: *backend-app-env
-    # README: To add local env variables uncomment the following line and add a .env file in the root directory
-    # env_file:
-    #   - .env
+    env_file:
+      - .env
     networks:
       - dittofeed-network-lite
+
   temporal:
     container_name: temporal
     restart: always
@@ -82,10 +110,10 @@ services:
       kompose.volume.type: configMap
     networks:
       - dittofeed-network-lite
-    ports:
-      - 7233:7233
+    # Removed external port mapping - only accessible internally
     volumes:
       - ./packages/backend-lib/temporal-dynamicconfig:/etc/temporal/config/dynamicconfig
+
   temporal-ui:
     profiles: ["temporal-ui"]
     container_name: temporal-ui
@@ -96,12 +124,37 @@ services:
       - temporal
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+      - TEMPORAL_CORS_ORIGINS=https://temporal.newwave.mw
     image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.22.1}
     networks:
       - dittofeed-network-lite
-    ports:
-      - 8080:8080
+      - traefik  # Added Traefik network
+    # Removed direct port mapping
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.services.temporal-ui.loadbalancer.server.port=8080"
+      
+      # Router configuration for Temporal UI
+      - "traefik.http.routers.temporal-ui-http.rule=Host(`temporal.newwave.mw`)"
+      - "traefik.http.routers.temporal-ui-http.entrypoints=web"
+      - "traefik.http.routers.temporal-ui-http.priority=100"
+      - "traefik.http.routers.temporal-ui-http.middlewares=temporal-security-headers"
+      
+      # Security headers for Temporal UI
+      - "traefik.http.middlewares.temporal-security-headers.headers.accesscontrolallowmethods=GET,OPTIONS,PUT,POST,DELETE"
+      - "traefik.http.middlewares.temporal-security-headers.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.temporal-security-headers.headers.hostsproxyheaders=X-Forwarded-Host"
+      - "traefik.http.middlewares.temporal-security-headers.headers.referrerpolicy=strict-origin-when-cross-origin"
+      - "traefik.http.middlewares.temporal-security-headers.headers.stsincludesubdomains=true"
+      - "traefik.http.middlewares.temporal-security-headers.headers.stspreload=true"
+      - "traefik.http.middlewares.temporal-security-headers.headers.stsseconds=31536000"
+      - "traefik.http.middlewares.temporal-security-headers.headers.framedeny=true"
+      - "traefik.http.middlewares.temporal-security-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.temporal-security-headers.headers.browserxssfilter=true"
+      - "traefik.http.middlewares.temporal-security-headers.headers.customresponseheaders.Server="
+      - "traefik.http.middlewares.temporal-security-headers.headers.customresponseheaders.ETag="
+
   postgres:
     image: postgres:${POSTGRES_VERSION:-15}
     restart: always
@@ -111,12 +164,12 @@ services:
       - POSTGRES_PASSWORD=${DATABASE_PASSWORD:-password}
       - POSTGRES_USER=${DATABASE_USER:-postgres}
       - POSTGRES_DB=dittofeed
-    ports:
-      - "5432:5432"
+    # Removed external port mapping for security - only accessible internally
     volumes:
       - postgres:/var/lib/postgresql/data
     networks:
       - dittofeed-network-lite
+
   clickhouse-server:
     image: clickhouse/clickhouse-server:24.12.6.70-alpine
     restart: always
@@ -128,30 +181,44 @@ services:
           memory: ${CLICKHOUSE_CONTAINER_MEM_LIMIT:-1024}m
     environment:
       <<: *clickhouse-credentials
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-      - "9009:9009"
+    # Removed external port mappings for security - only accessible internally
     volumes:
       - clickhouse_lib:/var/lib/clickhouse
       - clickhouse_log:/var/log/clickhouse-server
     networks:
       - dittofeed-network-lite
+
   # Note that minio is only used for local development. In production, use any S3-compatible storage.
   blob-storage:
     image: minio/minio
     profiles: ["blob-storage"]
     logging:
       driver: "local"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
     environment:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: password
     volumes:
       - blob-storage:/data
     command: server --console-address ":9001" /data
+    networks:
+      - dittofeed-network-lite
+      - traefik  # Added Traefik network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      
+      # MinIO Console (Admin UI)
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+      - "traefik.http.routers.minio-console-http.rule=Host(`minio-console.newwave.mw`)"
+      - "traefik.http.routers.minio-console-http.entrypoints=web"
+      - "traefik.http.routers.minio-console-http.service=minio-console"
+      
+      # MinIO API
+      - "traefik.http.services.minio-api.loadbalancer.server.port=9000"
+      - "traefik.http.routers.minio-api-http.rule=Host(`minio-api.newwave.mw`)"
+      - "traefik.http.routers.minio-api-http.entrypoints=web"
+      - "traefik.http.routers.minio-api-http.service=minio-api"
+
 volumes:
   postgres:
   clickhouse_lib:
@@ -162,3 +229,6 @@ networks:
   dittofeed-network-lite:
     driver: bridge
     name: dittofeed-network-lite
+  traefik:
+    external: true
+    name: traefik
