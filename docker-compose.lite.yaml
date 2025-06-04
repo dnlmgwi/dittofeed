@@ -37,7 +37,7 @@ services:
     environment:
       <<: *backend-app-env
       # comment out after initial setup
-      BOOTSTRAP: "true"
+      # BOOTSTRAP: "true"
     env_file:
       - .env
     networks:
